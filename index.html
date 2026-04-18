@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR Memorial Final</title>
+    <title>AR Memorial Statue</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -11,54 +11,57 @@
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            background: rgba(0,0,0,0.9); color: white; z-index: 1000; text-align: center;
+            background: #111; color: white; z-index: 1000;
         }
         button {
             padding: 20px 40px; font-size: 20px; background: #007bff;
-            color: white; border: none; border-radius: 15px; cursor: pointer;
+            color: white; border: none; border-radius: 12px; cursor: pointer;
         }
         #status {
             position: absolute; top: 20px; width: 100%; text-align: center;
-            color: white; background: rgba(0,0,0,0.6); z-index: 10; padding: 10px 0;
-            font-size: 14px; display: none; pointer-events: none;
+            color: white; z-index: 10; font-size: 14px; background: rgba(0,0,0,0.5); padding: 10px 0;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div id="overlay">
         <h2>پروژه یادمان</h2>
-        <button id="start-btn">فعال‌سازی دوربین و شروع</button>
+        <button id="start-btn">ورود به دوربین AR</button>
     </div>
     <div id="status">در حال جستجوی سطح... گوشی را حرکت دهید</div>
 
-    <script type="module">
-        import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
-
+    <script>
         let scene, camera, renderer, referenceCube, reticle, hitTestSource;
         let isPlaced = false;
 
         const startBtn = document.getElementById('start-btn');
-        startBtn.addEventListener('click', async () => {
-            if ('xr' in navigator) {
+        startBtn.onclick = async () => {
+            if (navigator.xr) {
                 try {
+                    // درخواست مستقیم سشن بدون کتابخانه‌های واسطه
                     const session = await navigator.xr.requestSession('immersive-ar', {
                         requiredFeatures: ['hit-test', 'local-floor']
                     });
-                    document.getElementById('overlay').style.display = 'none';
-                    document.getElementById('status').style.display = 'block';
-                    onSessionStarted(session);
-                } catch (e) { alert("خطا: " + e.message); }
+                    init(session);
+                } catch (e) {
+                    alert("خطای امنیتی یا فنی: " + e.message);
+                }
             } else {
-                alert("مرورگر شما پشتیبانی نمی‌کند. از WebXR Viewer استفاده کنید.");
+                alert("WebXR یافت نشد. حتماً از WebXR Viewer استفاده کنید.");
             }
-        });
+        };
 
-        function onSessionStarted(session) {
+        function init(session) {
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('status').style.display = 'block';
+
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
+
             renderer.xr.setSession(session);
 
             scene = new THREE.Scene();
@@ -66,8 +69,9 @@
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
-            // لود کردن مدل سه‌بعدی
-            new THREE.GLTFLoader().load('cube_map.glb', (gltf) => {
+            // لود مدل
+            const loader = new THREE.GLTFLoader();
+            loader.load('cube_map.glb', (gltf) => {
                 referenceCube = gltf.scene;
                 referenceCube.traverse(node => {
                     if (node.isMesh) {
@@ -79,7 +83,7 @@
                 scene.add(referenceCube);
             });
 
-            // دایره سفید راهنما
+            // دایره سفید
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
                 new THREE.MeshBasicMaterial()
@@ -92,17 +96,14 @@
         }
 
         function onSelect() {
-            if (!isPlaced) {
-                if (reticle.visible && referenceCube) {
-                    referenceCube.position.setFromMatrixPosition(reticle.matrix);
-                    referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
-                    referenceCube.visible = true;
-                    isPlaced = true;
-                    reticle.visible = false;
-                    document.getElementById('status').innerText = "قفل شد! حالا برای ثبت پیام، مرکز گوشی را روی وجه بگیرید و ضربه بزنید.";
-                }
-            } else {
-                // شلیک پرتو از مرکز دوربین
+            if (!isPlaced && reticle.visible) {
+                referenceCube.position.setFromMatrixPosition(reticle.matrix);
+                referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
+                referenceCube.visible = true;
+                isPlaced = true;
+                reticle.visible = false;
+                document.getElementById('status').innerText = "قفل شد. برای متن، مرکز صفحه را روی وجه بگیرید.";
+            } else if (isPlaced) {
                 const raycaster = new THREE.Raycaster();
                 const tempMatrix = new THREE.Matrix4();
                 tempMatrix.identity().extractRotation(camera.matrixWorld);
@@ -112,9 +113,7 @@
                 const intersects = raycaster.intersectObject(referenceCube, true);
                 if (intersects.length > 0) {
                     const msg = prompt("متن یادگاری:");
-                    if (msg) {
-                        addLabel(msg, intersects[0].point, intersects[0].face.normal);
-                    }
+                    if (msg) addLabel(msg, intersects[0].point, intersects[0].face.normal);
                 }
             }
         }
@@ -123,7 +122,6 @@
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 1024; canvas.height = 256;
-            
             ctx.fillStyle = 'white';
             ctx.font = 'bold 80px Arial';
             ctx.textAlign = 'center';
@@ -136,10 +134,8 @@
                 new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
             );
 
-            // قرار دادن دقیق و چرخش موازی با سطح
             label.position.copy(pos).add(normal.clone().multiplyScalar(0.02));
             label.lookAt(new THREE.Vector3().addVectors(pos, normal));
-            
             scene.add(label);
         }
 
@@ -149,4 +145,22 @@
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 if (!hitTestSource) {
                     session.requestReferenceSpace('viewer').then(space => {
-                        session.requestHitTestSource({ space }).then(src => { hitTestSource =
+                        session.requestHitTestSource({ space }).then(src => { hitTestSource = src; });
+                    });
+                }
+                if (hitTestSource && !isPlaced) {
+                    const results = frame.getHitTestResults(hitTestSource);
+                    if (results.length > 0) {
+                        const hit = results[0];
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
