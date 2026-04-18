@@ -1,71 +1,75 @@
-function onSelect() {
-    if (isPlaced) {
-        const raycaster = new THREE.Raycaster();
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.identity().extractRotation(camera.matrixWorld);
-        raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
-        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+function handleInteraction() {
+            // ۱. فاز کاشتن مدل (اگر هنوز کاشته نشده)
+            if (!isPlaced) {
+                if (reticle.visible && referenceCube) {
+                    referenceCube.position.setFromMatrixPosition(reticle.matrix);
+                    referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
+                    referenceCube.visible = true;
+                    isPlaced = true;
+                    reticle.visible = false; // دایره را بعد از کاشت مخفی کن
+                    document.getElementById('instructions').innerText = "مجسمه قفل شد. حالا مرکز صفحه را روی وجه مورد نظر بگیرید و ضربه بزنید.";
+                }
+                return; // در اولین ضربه فقط کاشت انجام شود
+            }
 
-        const intersects = raycaster.intersectObject(referenceCube, true);
-        
-        if (intersects.length > 0) {
-            const clickedMesh = intersects[0].object; // سطحی که در بلندر جدا کردی
-            console.log("سطح انتخاب شده:", clickedMesh.name);
+            // ۲. فاز نوشتن متن (اگر مدل قبلاً کاشته شده)
+            // شلیک پرتو از مرکز دوربین (جایی که کاربر نگاه می‌کند)
+            const raycaster = new THREE.Raycaster();
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(camera.matrixWorld);
+            
+            raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
-            const msg = prompt("متن یادگاری برای این بخش:");
-            if (msg) {
-                // ارسال مرکز سطح و جهت نرمال آن برای چسبیدن دقیق
-                addLabelToSurface(msg, clickedMesh, intersects[0].point, intersects[0].face.normal);
+            const intersects = raycaster.intersectObject(referenceCube, true);
+
+            if (intersects.length > 0) {
+                const message = prompt("پیام خود را برای این سطح بنویسید:");
+                if (message) {
+                    // ارسال Mesh انتخاب شده (که در بلندر جدا کردی) برای پیدا کردن مرکز دقیق
+                    addTextLabel(message, intersects[0].object, intersects[0].point, intersects[0].face.normal);
+                }
             }
         }
-    } else if (reticle.visible) {
-        // ... (همان منطق قبلی برای فیکس کردن مدل)
-        referenceCube.position.setFromMatrixPosition(reticle.matrix);
-        referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
-        referenceCube.visible = true;
-        isPlaced = true;
-    }
-}
 
-function addLabelToSurface(text, mesh, point, normal) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    // بزرگتر کردن رزولوشن برای وضوح بیشتر در ابعاد بزرگ
-    canvas.width = 1024; 
-    canvas.height = 256;
-    
-    // پس‌زمینه نیمه‌شفاف برای خوانایی (اختیاری)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 80px Arial'; // فونت بسیار بزرگتر
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 512, 128);
+        function addTextLabel(text, targetMesh, hitPoint, normal) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // رزولوشن بالا برای ابعاد بزرگ مجسمه
+            canvas.width = 1024;
+            canvas.height = 256;
+            
+            // استایل متن
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 80px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // نوشتن متن در مرکز بوم
+            ctx.fillText(text, 512, 128);
 
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.MeshBasicMaterial({ 
-        map: texture, 
-        transparent: true, 
-        side: THREE.DoubleSide,
-        depthTest: true 
-    });
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: texture, 
+                transparent: true, 
+                side: THREE.DoubleSide 
+            });
 
-    // اندازه فیزیکی برچسب (اینجا می‌توانید عرض را مثلا به 0.8 متر برسانید)
-    const geometry = new THREE.PlaneGeometry(0.6, 0.15); 
-    const label = new THREE.Mesh(geometry, material);
+            // اندازه فیزیکی متن روی مجسمه (مثلاً ۶۰ سانتی‌متر عرض)
+            const label = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.15), material);
 
-    // قرار دادن دقیق در محل کلیک
-    label.position.copy(point);
-    
-    // چسباندن به سطح: جهت برچسب را با جهت سطح (Normal) یکی می‌کنیم
-    const lookAtPoint = new THREE.Vector3().addVectors(point, normal);
-    label.lookAt(lookAtPoint);
+            // قرار دادن متن: اگر می‌خواهی دقیقاً وسط وجه جدا شده باشد:
+            // label.position.copy(targetMesh.position); 
+            // اگر می‌خواهی دقیقاً جایی که کلیک کردی باشد:
+            label.position.copy(hitPoint);
 
-    // یک فاصله بسیار کم (Offset) برای جلوگیری از تداخل با سطح مجسمه
-    label.position.add(normal.clone().multiplyScalar(0.02));
+            // چسباندن به سطح با استفاده از بردار نرمال
+            const lookAtPoint = new THREE.Vector3().addVectors(label.position, normal);
+            label.lookAt(lookAtPoint);
+            
+            // کمی فاصله از سطح برای جلوگیری از چشمک زدن تصویر (Z-fighting)
+            label.position.add(normal.clone().multiplyScalar(0.02));
 
-    scene.add(label);
-}
+            scene.add(label);
+        }
