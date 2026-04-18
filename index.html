@@ -3,122 +3,127 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR Memorial - Final Edition</title>
+    <title>AR Memorial Fix</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            background: rgba(0,0,0,0.8); color: white; z-index: 1000; text-align: center;
+            background: #111; color: white; z-index: 1000;
         }
-        button {
-            padding: 15px 30px; font-size: 18px; cursor: pointer;
-            background: #2196F3; color: white; border: none; border-radius: 8px; margin-top: 20px;
+        #start-btn {
+            padding: 20px 40px; font-size: 20px; background: #007bff;
+            color: white; border: none; border-radius: 12px; cursor: pointer;
         }
-        #instructions {
-            position: absolute; top: 10px; width: 100%; text-align: center;
-            color: white; background: rgba(0,0,0,0.5); z-index: 10; padding: 10px 0;
-            display: none;
+        #status {
+            position: absolute; bottom: 30px; width: 100%; text-align: center;
+            color: white; z-index: 10; font-size: 14px; display: none;
         }
     </style>
 </head>
 <body>
     <div id="overlay">
-        <h1>پروژه یادمان واقعیت افزوده</h1>
-        <p>برای شروع تجربه و دسترسی به دوربین، دکمه زیر را بزنید</p>
-        <button id="start-ar">شروع دوربین</button>
+        <h2>پروژه یادمان</h2>
+        <button id="start-btn">فعال‌سازی دوربین و شروع</button>
     </div>
-
-    <div id="instructions">گوشی را حرکت دهید تا سطح شناسایی شود...</div>
+    <div id="status">در حال جستجوی سطح...</div>
 
     <script type="module">
-        import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
-
-        let scene, camera, renderer, reticle, referenceCube, controller;
-        let hitTestSource = null;
+        let scene, camera, renderer, referenceCube, reticle, hitTestSource;
         let isPlaced = false;
-        let raycaster = new THREE.Raycaster();
-        let mouse = new THREE.Vector2();
 
-        document.getElementById('start-ar').addEventListener('click', initAR);
+        const startBtn = document.getElementById('start-btn');
+        startBtn.addEventListener('click', startAR);
 
-        async function initAR() {
-            document.getElementById('overlay').style.display = 'none';
-            document.getElementById('instructions').style.display = 'block';
+        async function startAR() {
+            // ۱. بررسی پشتیبانی از XR
+            if ( 'xr' in navigator ) {
+                try {
+                    const session = await navigator.xr.requestSession('immersive-ar', {
+                        requiredFeatures: ['hit-test', 'local-floor']
+                    });
+                    
+                    document.getElementById('overlay').style.display = 'none';
+                    document.getElementById('status').style.display = 'block';
+                    
+                    onSessionStarted(session);
+                } catch (e) {
+                    alert("خطا در شروع AR: " + e.message);
+                }
+            } else {
+                alert("مرورگر شما از WebXR پشتیبانی نمی‌کند. حتماً از WebXR Viewer استفاده کنید.");
+            }
+        }
+
+        function onSessionStarted(session) {
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            renderer.xr.setReferenceSpaceType('local-floor');
+            renderer.xr.setSession(session);
 
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
-
-            // ایجاد دکمه واقعیت افزوده و کلیک خودکار برای آیفون
-            const arButton = ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] });
-            document.body.appendChild(arButton);
-            arButton.click();
-
+            // نورپردازی
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
 
-            // ۱. ساخت حلقه راهنما (Reticle)
-            reticle = new THREE.Mesh(
-                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial({ color: 0x00ff00 })
-            );
-            reticle.visible = false;
-            scene.add(reticle);
-
-            // ۲. لود کردن مدل سه‌بعدی
+            // لود مدل
             const loader = new THREE.GLTFLoader();
             loader.load('cube_map.glb', (gltf) => {
                 referenceCube = gltf.scene;
                 referenceCube.traverse(node => {
                     if (node.isMesh) {
-                        node.material.colorWrite = false; // نامرئی
-                        node.material.depthWrite = true;  // پوشانندگی
+                        node.material.colorWrite = false;
+                        node.material.depthWrite = true;
                     }
                 });
                 referenceCube.visible = false;
                 scene.add(referenceCube);
             });
 
-            // ۳. کنترلر لمس برای کاشتن مدل و نوشتن متن
-            controller = renderer.xr.getController(0);
-            controller.addEventListener('select', handleInteraction);
-            scene.add(controller);
+            // حلقه راهنما
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial()
+            );
+            reticle.visible = false;
+            scene.add(reticle);
+
+            // مدیریت کلیک (لمس صفحه)
+            session.addEventListener('select', onSelect);
 
             renderer.setAnimationLoop(render);
         }
 
-        function handleInteraction() {
-            if (!isPlaced) {
-                // فاز اول: کاشتن مدل روی سطح شناسایی شده
-                if (reticle.visible && referenceCube) {
-                    referenceCube.position.setFromMatrixPosition(reticle.matrix);
-                    referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
-                    referenceCube.visible = true;
-                    isPlaced = true;
-                    document.getElementById('instructions').innerText = "مجسمه فیکس شد. حالا برای ثبت پیام روی آن کلیک کنید.";
-                }
-            } else {
-                // فاز دوم: شلیک ری‌کستر برای ثبت متن
-                raycaster.setFromCamera(new THREE.Vector2(0,0), camera); // در AR مرکز صفحه را چک می‌کنیم
-                const intersects = raycaster.intersectObject(referenceCube, true);
+        function onSelect() {
+            if (!isPlaced && reticle.visible) {
+                referenceCube.position.setFromMatrixPosition(reticle.matrix);
+                referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
+                referenceCube.visible = true;
+                isPlaced = true;
+                document.getElementById('status').innerText = "فیکس شد. حالا روی مجسمه کلیک کنید.";
+            } else if (isPlaced) {
+                // شلیک Raycaster از مرکز دوربین
+                const raycaster = new THREE.Raycaster();
+                const tempMatrix = new THREE.Matrix4();
+                tempMatrix.identity().extractRotation(camera.matrixWorld);
+                raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
+                const intersects = raycaster.intersectObject(referenceCube, true);
                 if (intersects.length > 0) {
-                    const message = prompt("پیام یادگاری خود را بنویسید:");
-                    if (message) {
-                        addTextLabel(message, intersects[0].point, intersects[0].face.normal);
-                    }
+                    const msg = prompt("متن یادگاری:");
+                    if (msg) addLabel(msg, intersects[0].point, intersects[0].face.normal);
                 }
             }
         }
 
-        function addTextLabel(text, position, normal) {
+        function addLabel(text, pos, normal) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 512; canvas.height = 128;
@@ -128,11 +133,12 @@
             ctx.fillText(text, 256, 80);
 
             const texture = new THREE.CanvasTexture(canvas);
-            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-            const label = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.05), material);
-
-            label.position.copy(position).add(normal.clone().multiplyScalar(0.01));
-            label.lookAt(position.clone().add(normal));
+            const label = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.2, 0.05),
+                new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+            );
+            label.position.copy(pos).add(normal.clone().multiplyScalar(0.01));
+            label.lookAt(pos.clone().add(normal));
             scene.add(label);
         }
 
@@ -140,17 +146,15 @@
             if (frame) {
                 const session = renderer.xr.getSession();
                 const referenceSpace = renderer.xr.getReferenceSpace();
-
                 if (!hitTestSource) {
                     session.requestReferenceSpace('viewer').then(space => {
-                        session.requestHitTestSource({ space }).then(source => { hitTestSource = source; });
+                        session.requestHitTestSource({ space }).then(src => { hitTestSource = src; });
                     });
                 }
-
                 if (hitTestSource && !isPlaced) {
-                    const hitTestResults = frame.getHitTestResults(hitTestSource);
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
+                    const results = frame.getHitTestResults(hitTestSource);
+                    if (results.length > 0) {
+                        const hit = results[0];
                         reticle.visible = true;
                         reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
                     } else {
