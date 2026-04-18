@@ -1,76 +1,152 @@
-function handleInput() {
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Memorial Final</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.9); color: white; z-index: 1000; text-align: center;
+        }
+        button {
+            padding: 20px 40px; font-size: 20px; background: #007bff;
+            color: white; border: none; border-radius: 15px; cursor: pointer;
+        }
+        #status {
+            position: absolute; top: 20px; width: 100%; text-align: center;
+            color: white; background: rgba(0,0,0,0.6); z-index: 10; padding: 10px 0;
+            font-size: 14px; display: none; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="overlay">
+        <h2>پروژه یادمان</h2>
+        <button id="start-btn">فعال‌سازی دوربین و شروع</button>
+    </div>
+    <div id="status">در حال جستجوی سطح... گوشی را حرکت دهید</div>
+
+    <script type="module">
+        import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
+
+        let scene, camera, renderer, referenceCube, reticle, hitTestSource;
+        let isPlaced = false;
+
+        const startBtn = document.getElementById('start-btn');
+        startBtn.addEventListener('click', async () => {
+            if ('xr' in navigator) {
+                try {
+                    const session = await navigator.xr.requestSession('immersive-ar', {
+                        requiredFeatures: ['hit-test', 'local-floor']
+                    });
+                    document.getElementById('overlay').style.display = 'none';
+                    document.getElementById('status').style.display = 'block';
+                    onSessionStarted(session);
+                } catch (e) { alert("خطا: " + e.message); }
+            } else {
+                alert("مرورگر شما پشتیبانی نمی‌کند. از WebXR Viewer استفاده کنید.");
+            }
+        });
+
+        function onSessionStarted(session) {
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+            renderer.xr.setSession(session);
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
+
+            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
+
+            // لود کردن مدل سه‌بعدی
+            new THREE.GLTFLoader().load('cube_map.glb', (gltf) => {
+                referenceCube = gltf.scene;
+                referenceCube.traverse(node => {
+                    if (node.isMesh) {
+                        node.material.colorWrite = false;
+                        node.material.depthWrite = true;
+                    }
+                });
+                referenceCube.visible = false;
+                scene.add(referenceCube);
+            });
+
+            // دایره سفید راهنما
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial()
+            );
+            reticle.visible = false;
+            scene.add(reticle);
+
+            session.addEventListener('select', onSelect);
+            renderer.setAnimationLoop(render);
+        }
+
+        function onSelect() {
             if (!isPlaced) {
-                // ... (بخش قبلی برای کاشت مدل دست نخورده باقی بماند)
                 if (reticle.visible && referenceCube) {
                     referenceCube.position.setFromMatrixPosition(reticle.matrix);
                     referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
                     referenceCube.visible = true;
                     isPlaced = true;
                     reticle.visible = false;
-                    document.getElementById('status').innerText = "مجسمه قفل شد. برای نوشتن روی هر وجه کلیک کنید.";
+                    document.getElementById('status').innerText = "قفل شد! حالا برای ثبت پیام، مرکز گوشی را روی وجه بگیرید و ضربه بزنید.";
                 }
             } else {
-                // فاز نوشتن متن: شلیک پرتو از مرکز دید کاربر
+                // شلیک پرتو از مرکز دوربین
                 const raycaster = new THREE.Raycaster();
                 const tempMatrix = new THREE.Matrix4();
                 tempMatrix.identity().extractRotation(camera.matrixWorld);
                 raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
                 raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
-                // مهم: true برای بررسی تمام لایه‌های مدل اسکن شده
                 const intersects = raycaster.intersectObject(referenceCube, true);
                 if (intersects.length > 0) {
-                    const intersectedObject = intersects[0].object; // مشِ دقیقِ انتخاب شده
-                    const hitPoint = intersects[0].point; // نقطه دقیق برخورد
-                    const normal = intersects[0].face.normal; // جهت وجه
-
-                    const msg = prompt("متن یادگاری خود را بنویسید:");
+                    const msg = prompt("متن یادگاری:");
                     if (msg) {
-                        // ارسال تمام اطلاعات برای چسباندن دقیق
-                        createPreciseLabel(msg, intersectedObject, hitPoint, normal);
+                        addLabel(msg, intersects[0].point, intersects[0].face.normal);
                     }
                 }
             }
         }
 
-        function createPreciseLabel(text, targetMesh, point, normal) {
+        function addLabel(text, pos, normal) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
+            canvas.width = 1024; canvas.height = 256;
             
-            // بزرگتر کردن بوم برای وضوح بیشتر در فواصل دور (مثلا برای مجسمه بلند)
-            canvas.width = 1024; 
-            canvas.height = 256;
-            
-            // طراحی متن با فونت درشت
-            ctx.fillStyle = 'rgba(255, 255, 255, 1)'; // سفید خالص
+            ctx.fillStyle = 'white';
             ctx.font = 'bold 80px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(text, 512, 128);
 
             const texture = new THREE.CanvasTexture(canvas);
-            const material = new THREE.MeshBasicMaterial({ 
-                map: texture, 
-                transparent: true, 
-                side: THREE.DoubleSide,
-                depthTest: true // برای اینکه Occlusion درست کار کند
-            });
-            
-            // تنظیم ابعاد برچسب (مثلاً ۵۰ سانتی‌متر عرض)
-            // این اعداد را بر اساس بزرگی شیء واقعی‌ات تغییر بده
-            const label = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.125), material);
-            
-            // قرار دادن دقیق متن در محل کلیک
-            label.position.copy(point);
-            
-            // مهم: چسباندن متن به سطح با استفاده از بردار Normal
-            // متن را طوری می‌چرخانیم که رو به جهت بیرونِ وجه باشد
-            const lookAtPoint = new THREE.Vector3().addVectors(point, normal);
-            label.lookAt(lookAtPoint);
-            
-            // یک فاصله بسیار کم (Offset) برای جلوگیری از تداخل با سطح مجسمه (چشمک زدن تصویر)
-            label.position.add(normal.clone().multiplyScalar(0.01));
+            const label = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.5, 0.125),
+                new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+            );
 
-            // اضافه کردن به Mesh مورد نظر، نه مستقیم به Scene، تا با حرکت مدل جابه‌جا شود
-            targetMesh.add(label); 
+            // قرار دادن دقیق و چرخش موازی با سطح
+            label.position.copy(pos).add(normal.clone().multiplyScalar(0.02));
+            label.lookAt(new THREE.Vector3().addVectors(pos, normal));
+            
+            scene.add(label);
         }
+
+        function render(timestamp, frame) {
+            if (frame) {
+                const session = renderer.xr.getSession();
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                if (!hitTestSource) {
+                    session.requestReferenceSpace('viewer').then(space => {
+                        session.requestHitTestSource({ space }).then(src => { hitTestSource =
