@@ -1,169 +1,71 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR Memorial Fix</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
-        #overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            background: #111; color: white; z-index: 1000;
-        }
-        #start-btn {
-            padding: 20px 40px; font-size: 20px; background: #007bff;
-            color: white; border: none; border-radius: 12px; cursor: pointer;
-        }
-        #status {
-            position: absolute; bottom: 30px; width: 100%; text-align: center;
-            color: white; z-index: 10; font-size: 14px; display: none;
-        }
-    </style>
-</head>
-<body>
-    <div id="overlay">
-        <h2>پروژه یادمان</h2>
-        <button id="start-btn">فعال‌سازی دوربین و شروع</button>
-    </div>
-    <div id="status">در حال جستجوی سطح...</div>
+function onSelect() {
+    if (isPlaced) {
+        const raycaster = new THREE.Raycaster();
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(camera.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
-    <script type="module">
-        let scene, camera, renderer, referenceCube, reticle, hitTestSource;
-        let isPlaced = false;
+        const intersects = raycaster.intersectObject(referenceCube, true);
+        
+        if (intersects.length > 0) {
+            const clickedMesh = intersects[0].object; // سطحی که در بلندر جدا کردی
+            console.log("سطح انتخاب شده:", clickedMesh.name);
 
-        const startBtn = document.getElementById('start-btn');
-        startBtn.addEventListener('click', startAR);
-
-        async function startAR() {
-            // ۱. بررسی پشتیبانی از XR
-            if ( 'xr' in navigator ) {
-                try {
-                    const session = await navigator.xr.requestSession('immersive-ar', {
-                        requiredFeatures: ['hit-test', 'local-floor']
-                    });
-                    
-                    document.getElementById('overlay').style.display = 'none';
-                    document.getElementById('status').style.display = 'block';
-                    
-                    onSessionStarted(session);
-                } catch (e) {
-                    alert("خطا در شروع AR: " + e.message);
-                }
-            } else {
-                alert("مرورگر شما از WebXR پشتیبانی نمی‌کند. حتماً از WebXR Viewer استفاده کنید.");
+            const msg = prompt("متن یادگاری برای این بخش:");
+            if (msg) {
+                // ارسال مرکز سطح و جهت نرمال آن برای چسبیدن دقیق
+                addLabelToSurface(msg, clickedMesh, intersects[0].point, intersects[0].face.normal);
             }
         }
+    } else if (reticle.visible) {
+        // ... (همان منطق قبلی برای فیکس کردن مدل)
+        referenceCube.position.setFromMatrixPosition(reticle.matrix);
+        referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
+        referenceCube.visible = true;
+        isPlaced = true;
+    }
+}
 
-        function onSessionStarted(session) {
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            renderer.xr.setReferenceSpaceType('local-floor');
-            renderer.xr.setSession(session);
+function addLabelToSurface(text, mesh, point, normal) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // بزرگتر کردن رزولوشن برای وضوح بیشتر در ابعاد بزرگ
+    canvas.width = 1024; 
+    canvas.height = 256;
+    
+    // پس‌زمینه نیمه‌شفاف برای خوانایی (اختیاری)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 80px Arial'; // فونت بسیار بزرگتر
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 512, 128);
 
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.MeshBasicMaterial({ 
+        map: texture, 
+        transparent: true, 
+        side: THREE.DoubleSide,
+        depthTest: true 
+    });
 
-            // نورپردازی
-            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-            scene.add(light);
+    // اندازه فیزیکی برچسب (اینجا می‌توانید عرض را مثلا به 0.8 متر برسانید)
+    const geometry = new THREE.PlaneGeometry(0.6, 0.15); 
+    const label = new THREE.Mesh(geometry, material);
 
-            // لود مدل
-            const loader = new THREE.GLTFLoader();
-            loader.load('cube_map.glb', (gltf) => {
-                referenceCube = gltf.scene;
-                referenceCube.traverse(node => {
-                    if (node.isMesh) {
-                        node.material.colorWrite = false;
-                        node.material.depthWrite = true;
-                    }
-                });
-                referenceCube.visible = false;
-                scene.add(referenceCube);
-            });
+    // قرار دادن دقیق در محل کلیک
+    label.position.copy(point);
+    
+    // چسباندن به سطح: جهت برچسب را با جهت سطح (Normal) یکی می‌کنیم
+    const lookAtPoint = new THREE.Vector3().addVectors(point, normal);
+    label.lookAt(lookAtPoint);
 
-            // حلقه راهنما
-            reticle = new THREE.Mesh(
-                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial()
-            );
-            reticle.visible = false;
-            scene.add(reticle);
+    // یک فاصله بسیار کم (Offset) برای جلوگیری از تداخل با سطح مجسمه
+    label.position.add(normal.clone().multiplyScalar(0.02));
 
-            // مدیریت کلیک (لمس صفحه)
-            session.addEventListener('select', onSelect);
-
-            renderer.setAnimationLoop(render);
-        }
-
-        function onSelect() {
-            if (!isPlaced && reticle.visible) {
-                referenceCube.position.setFromMatrixPosition(reticle.matrix);
-                referenceCube.quaternion.setFromRotationMatrix(reticle.matrix);
-                referenceCube.visible = true;
-                isPlaced = true;
-                document.getElementById('status').innerText = "فیکس شد. حالا روی مجسمه کلیک کنید.";
-            } else if (isPlaced) {
-                // شلیک Raycaster از مرکز دوربین
-                const raycaster = new THREE.Raycaster();
-                const tempMatrix = new THREE.Matrix4();
-                tempMatrix.identity().extractRotation(camera.matrixWorld);
-                raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
-                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-
-                const intersects = raycaster.intersectObject(referenceCube, true);
-                if (intersects.length > 0) {
-                    const msg = prompt("متن یادگاری:");
-                    if (msg) addLabel(msg, intersects[0].point, intersects[0].face.normal);
-                }
-            }
-        }
-
-        function addLabel(text, pos, normal) {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 512; canvas.height = 128;
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 40px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(text, 256, 80);
-
-            const texture = new THREE.CanvasTexture(canvas);
-            const label = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.2, 0.05),
-                new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
-            );
-            label.position.copy(pos).add(normal.clone().multiplyScalar(0.01));
-            label.lookAt(pos.clone().add(normal));
-            scene.add(label);
-        }
-
-        function render(timestamp, frame) {
-            if (frame) {
-                const session = renderer.xr.getSession();
-                const referenceSpace = renderer.xr.getReferenceSpace();
-                if (!hitTestSource) {
-                    session.requestReferenceSpace('viewer').then(space => {
-                        session.requestHitTestSource({ space }).then(src => { hitTestSource = src; });
-                    });
-                }
-                if (hitTestSource && !isPlaced) {
-                    const results = frame.getHitTestResults(hitTestSource);
-                    if (results.length > 0) {
-                        const hit = results[0];
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                    } else {
-                        reticle.visible = false;
-                    }
-                }
-            }
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
+    scene.add(label);
+}
